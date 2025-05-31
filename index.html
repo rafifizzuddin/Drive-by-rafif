@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Dashboard Berkendara</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      width: 100%;
+    }
+    body {
+      background-color: black;
+      color: lime;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    #data-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-grow: 1;
+    }
+
+    h1, h2 {
+      margin: 0;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button {
+      background: lime;
+      color: black;
+      padding: 10px 15px;
+      border: none;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+
+    #notification {
+      color: yellow;
+      font-weight: bold;
+      min-height: 24px;
+    }
+
+    body.landscape {
+      flex-direction: row;
+    }
+
+    body.landscape #data-display {
+      flex-direction: column;
+    }
+
+    #home-btn {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.1);
+      color: #ccc;
+      border: 1px solid #444;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 6px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="data-display">
+    <h1 id="clock">00:00:00</h1>
+    <h2 id="battery">Baterai: --%</h2>
+    <h2 id="speed">Kecepatan: -- km/jam</h2>
+    <h2 id="heading">Arah: --</h2>
+    <div id="notification"></div>
+  </div>
+
+  <div class="controls" id="mode-buttons">
+    <button onclick="setOrientation('portrait')">Mode Potret</button>
+    <button onclick="setOrientation('landscape')">Mode Lanskap</button>
+  </div>
+
+  <div class="controls" id="action-buttons">
+    <button id="start-btn" onclick="startDashboard(this)">Mulai Mode Berkendara</button>
+  </div>
+
+  <button id="home-btn" onclick="resetOrientation()">Kembali ke Menu Awal</button>
+
+  <script>
+    function updateClock() {
+      const now = new Date();
+      const timeString = now.toLocaleTimeString('id-ID');
+      document.getElementById('clock').textContent = timeString;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    if (navigator.getBattery) {
+      navigator.getBattery().then(function(battery) {
+        function updateBatteryStatus() {
+          const percent = Math.round(battery.level * 100);
+          document.getElementById('battery').textContent = "Baterai: " + percent + "%";
+          if (percent <= 15) showNotification("⚠️ Baterai rendah!");
+        }
+        updateBatteryStatus();
+        battery.addEventListener('levelchange', updateBatteryStatus);
+      });
+    }
+
+    function handleOrientation(event) {
+      const heading = event.webkitCompassHeading || 360 - event.alpha;
+      if (heading != null && !isNaN(heading)) {
+        const arah = compassDirection(heading);
+        document.getElementById('heading').textContent = `Arah: ${arah} (${heading.toFixed(0)}°)`;
+      }
+    }
+
+    function compassDirection(degree) {
+      const dirs = ["Utara", "Timur Laut", "Timur", "Tenggara", "Selatan", "Barat Daya", "Barat", "Barat Laut"];
+      const index = Math.round(degree / 45) % 8;
+      return dirs[index];
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(function(pos) {
+        const speed = pos.coords.speed;
+        const kmh = speed != null ? (speed * 3.6).toFixed(1) : '--';
+        document.getElementById('speed').textContent = `Kecepatan: ${kmh} km/jam`;
+      }, function(err) {
+        document.getElementById('speed').textContent = "Kecepatan: GPS tidak tersedia";
+        showNotification("❌ GPS tidak aktif");
+      }, {
+        enableHighAccuracy: true,
+        maximumAge: 1000
+      });
+    }
+
+    function startDashboard(btn) {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      btn.style.display = 'none';
+
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(state => {
+          if (state === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation);
+          } else {
+            alert("Izin kompas ditolak");
+          }
+        }).catch(console.error);
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
+    }
+
+    function showNotification(msg) {
+      const notif = document.getElementById('notification');
+      notif.textContent = msg;
+      setTimeout(() => notif.textContent = '', 5000);
+    }
+
+    function setOrientation(mode) {
+      document.getElementById("mode-buttons").style.display = "none";
+      document.getElementById("home-btn").style.display = "block";
+
+      if (mode === 'landscape') {
+        document.body.classList.add('landscape');
+        screen.orientation?.lock?.('landscape').catch(() => {});
+      } else {
+        document.body.classList.remove('landscape');
+        screen.orientation?.lock?.('portrait').catch(() => {});
+      }
+    }
+
+    function resetOrientation() {
+      document.body.classList.remove('landscape');
+      document.getElementById("mode-buttons").style.display = "flex";
+      document.getElementById("home-btn").style.display = "none";
+      document.getElementById("start-btn").style.display = "inline-block";
+      screen.orientation?.unlock?.();
+    }
+  </script>
+</body>
+</html>
