@@ -77,6 +77,7 @@
       font-size: 14px;
       padding: 8px 14px;
       border-radius: 6px;
+      z-index: 9999;
       display: none;
     }
   </style>
@@ -87,7 +88,14 @@
     <h2 id="battery">Baterai: --%</h2>
     <h2 id="speed">Kecepatan: -- km/jam</h2>
     <h2 id="heading">Arah: --</h2>
-    <h2 id="cuaca">Memuat cuaca...</h2>
+    <h2 id="weather">Cuaca: --</h2>
+    <h2 id="distance">Jarak: 0.00 km</h2>
+    <h2 id="elapsed">Waktu: 0:00</h2>
+    <h2 id="fuel">BBM Terpakai: 0.00 L</h2>
+    <div class="controls" id="tracking-controls">
+      <button onclick="startTracking()">Mulai</button>
+      <button onclick="pauseTracking()">Pause</button>
+    </div>
     <div id="notification"></div>
   </div>
 
@@ -103,7 +111,20 @@
   <button id="home-btn" onclick="resetOrientation()">Kembali ke Menu Awal</button>
 
   <script>
-    const API_KEY = "f683ba6411a9408ebf4103256253105";
+    // API Cuaca
+    const weatherApiKey = "f683ba6411a9408ebf4103256253105";
+    function fetchWeather(lat, lon) {
+      fetch(`https://api.weatherapi.com/v1/current.json?key=${weatherApiKey}&q=${lat},${lon}&lang=id`)
+        .then(res => res.json())
+        .then(data => {
+          const kondisi = data.current.condition.text;
+          const suhu = data.current.temp_c;
+          document.getElementById('weather').textContent = `Cuaca: ${kondisi}, ${suhu}°C`;
+        })
+        .catch(err => {
+          document.getElementById('weather').textContent = 'Cuaca: Gagal dimuat';
+        });
+    }
 
     function updateClock() {
       const now = new Date();
@@ -144,10 +165,21 @@
         const speed = pos.coords.speed;
         const kmh = speed != null ? (speed * 3.6).toFixed(1) : '--';
         document.getElementById('speed').textContent = `Kecepatan: ${kmh} km/jam`;
-        fetchCuaca(pos.coords.latitude, pos.coords.longitude);
+
+        const { latitude, longitude } = pos.coords;
+        if (!window.weatherFetched) {
+          fetchWeather(latitude, longitude);
+          window.weatherFetched = true;
+        }
+
+        if (tracking && lastCoords) {
+          const d = getDistanceFromLatLon(lastCoords.lat, lastCoords.lon, latitude, longitude);
+          totalDistance += d;
+          updateDistance();
+        }
+        lastCoords = { lat: latitude, lon: longitude };
       }, function(err) {
         document.getElementById('speed').textContent = "Kecepatan: GPS tidak tersedia";
-        document.getElementById('cuaca').textContent = "Gagal memuat cuaca";
         showNotification("❌ GPS tidak aktif");
       }, {
         enableHighAccuracy: true,
@@ -155,40 +187,15 @@
       });
     }
 
-    function fetchCuaca(lat, lon) {
-      const url = `https://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${lat},${lon}`;
-      fetch(url)
-        .then(res => res.json())
-        .then(data => {
-          const tempat = data.location.name;
-          const suhu = data.current.temp_c;
-          const kondisi = data.current.condition.text;
-          document.getElementById("cuaca").textContent = `Cuaca: ${tempat}, ${kondisi}, ${suhu}°C`;
-        })
-        .catch(err => {
-          console.error("Cuaca error:", err);
-          document.getElementById("cuaca").textContent = "Gagal memuat cuaca";
-        });
-    }
-
-    function startDashboard(btn) {
-      const el = document.documentElement;
-      if (el.requestFullscreen) el.requestFullscreen();
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-      btn.style.display = 'none';
-
-      if (typeof DeviceOrientationEvent !== 'undefined' &&
-          typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(state => {
-          if (state === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation);
-          } else {
-            alert("Izin kompas ditolak");
-          }
-        }).catch(console.error);
-      } else {
-        window.addEventListener('deviceorientation', handleOrientation);
-      }
+    function getDistanceFromLatLon(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
     }
 
     function showNotification(msg) {
@@ -215,7 +222,76 @@
       document.getElementById("mode-buttons").style.display = "flex";
       document.getElementById("home-btn").style.display = "none";
       document.getElementById("start-btn").style.display = "inline-block";
+      resetTracking();
       screen.orientation?.unlock?.();
+    }
+
+    function startDashboard(btn) {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      btn.style.display = 'none';
+
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(state => {
+          if (state === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation);
+          } else {
+            alert("Izin kompas ditolak");
+          }
+        }).catch(console.error);
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
+    }
+
+    // Tracking waktu dan jarak
+    let tracking = false;
+    let startTime = null;
+    let elapsedInterval;
+    let totalDistance = 0;
+    let lastCoords = null;
+
+    function startTracking() {
+      if (!tracking) {
+        tracking = true;
+        if (!startTime) startTime = Date.now();
+        elapsedInterval = setInterval(updateElapsed, 1000);
+        showNotification("🚀 Pelacakan dimulai");
+      }
+    }
+
+    function pauseTracking() {
+      tracking = false;
+      clearInterval(elapsedInterval);
+      showNotification("⏸️ Pelacakan dihentikan sementara");
+    }
+
+    function resetTracking() {
+      tracking = false;
+      clearInterval(elapsedInterval);
+      startTime = null;
+      totalDistance = 0;
+      lastCoords = null;
+      document.getElementById('distance').textContent = 'Jarak: 0.00 km';
+      document.getElementById('elapsed').textContent = 'Waktu: 0:00';
+      document.getElementById('fuel').textContent = 'BBM Terpakai: 0.00 L';
+    }
+
+    function updateElapsed() {
+      if (!startTime) return;
+      const now = Date.now();
+      const diff = Math.floor((now - startTime) / 1000);
+      const minutes = Math.floor(diff / 60);
+      const seconds = diff % 60;
+      document.getElementById('elapsed').textContent = `Waktu: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    function updateDistance() {
+      document.getElementById('distance').textContent = `Jarak: ${totalDistance.toFixed(2)} km`;
+      const fuelUsed = totalDistance / 35;
+      document.getElementById('fuel').textContent = `BBM Terpakai: ${fuelUsed.toFixed(2)} L`;
     }
   </script>
 </body>
